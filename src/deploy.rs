@@ -3,7 +3,7 @@ use crate::{DeployOpts, NodeCfg, nix, ssh};
 use anyhow::{anyhow, Context, Result};
 use std::{path::Path, process::Stdio};
 use tokio::process;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 // Since we just save the config to `/etc/henix/{hash}`, it's not necessary to rollback anything
 // on build failure.
@@ -24,7 +24,7 @@ async fn copy_config(
     // rather than the directory itself.
     let mut cfg_dir_with_slash = cfg_dir.to_owned();
     cfg_dir_with_slash.push("");
-    let out = process::Command::new("rsync")
+    let rsync = process::Command::new("rsync")
         .arg("--exclude=.git/")
         .arg("-a") // Archive mode, preserve symlinks, permissions, devices, etc.
         .arg("-F") // Allow `.rsync-filter` files to be used
@@ -36,15 +36,15 @@ async fn copy_config(
         .output()
         .await
         .context("Could not execute rsync to copy files")?;
-    if !out.status.success() {
+    if !rsync.status.success() {
         return Err(anyhow!(format!(
             "Could not rsync files to location `{}` (rsync exited with {}), with stderr of:\n{}",
-            out.status
+            rsync.status
                 .code()
                 .map(|x| i32::to_string(&x))
                 .unwrap_or("<unknown>".to_owned()),
             node_location,
-            String::from_utf8_lossy(&out.stderr)
+            String::from_utf8_lossy(&rsync.stderr)
         )));
     }
     info!("Copying finished");
@@ -82,12 +82,27 @@ async fn process_node_raw(
     cfg_dir: &Path,
 ) -> Result<()> {
     let cfg_hash = nix::hash(cfg_dir).await.context("Could not get hash")?;
+    info!("Configuration hash is {}", cfg_hash);
     copy_config(&node_cfg.location, cfg_dir, &cfg_hash)
         .await
         .context("Could not copy config")?;
     build_config(dep_opts, remote, &name, &cfg_hash)
         .await
         .context("Could not build config")?;
+    // Link the latest config
+    let link_res = remote.command("ln")
+        .arg("-s")
+        .arg("-f") // Overwite existing destination files
+        .arg(format!("/etc/henix/{}", cfg_hash))
+        .arg("/etc/henix/latest")
+        .status()
+        .await;
+    if let Ok(link_status) = link_res {
+        if link_status.success() {
+            return Ok(());
+        }
+    }
+    warn!("Could not symlink /etc/henix/latest to /etc/henix/{hash}. This is more for convenience, but you may not be able to easily find the current configuration if it is not symlinked. Recommended command: ln -s -f /etc/henix/{hash} /etc/henix/latest", hash = cfg_hash);
     Ok(())
 }
 

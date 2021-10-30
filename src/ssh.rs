@@ -23,7 +23,7 @@ pub async fn connect_to_node(node_name: &str, node_cfg: &NodeCfg) -> Result<open
 
 /// This proxies the output of an SSH command (`openssh::Command`)
 /// to the tracing logger, line-by-line.
-/// The child's stdout is sent to `info!`, and the child's stderr is sent to `warn!`.
+/// The child's stdout and stderr are both sent to `info!`.
 #[tracing::instrument(name="exec", skip(cmd))]
 pub async fn proxy_output_to_logging<'a>(
     program: &str,
@@ -62,7 +62,7 @@ pub async fn proxy_output_to_logging<'a>(
                 info!("stdout: {}", line);
             }
             Ok(Some(line)) = stderr_lines.next_line() => {
-                warn!("stderr: {}", line);
+                info!("stderr: {}", line);
             }
             else => break
         }
