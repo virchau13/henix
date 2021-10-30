@@ -1,22 +1,11 @@
 /// Does the actual deployment.
-use crate::{DeployOpts, NodeCfg, nix, ssh};
+use crate::{nix, ssh, DeployOpts, NodeCfg};
 use anyhow::{anyhow, Context, Result};
-use std::{path::Path, process::Stdio};
+use std::path::Path;
 use tokio::process;
 use tracing::{error, info, warn};
 
-// Since we just save the config to `/etc/henix/{hash}`, it's not necessary to rollback anything
-// on build failure.
-async fn rollback(_remote: &mut openssh::Session) -> Result<()> {
-    info!("No special rollback necessary");
-    Ok(())
-}
-
-async fn copy_config(
-    node_location: &str,
-    cfg_dir: &Path,
-    cfg_hash: &str,
-) -> Result<()> {
+async fn copy_config(node_location: &str, cfg_dir: &Path, cfg_hash: &str) -> Result<()> {
     info!("Copying files");
     info!("Using rsync to copy config");
     // We need to add a slash after `cfg_dir`,
@@ -30,7 +19,8 @@ async fn copy_config(
         .arg("-F") // Allow `.rsync-filter` files to be used
         .arg("--delete") // Remove files on the remote not present locally
         .arg("--mkpath") // Equivalent of `mkdir -p` on the remote path
-        .arg("-e").arg("ssh") // Use ssh (rsync might have been configured differently)
+        .arg("-e")
+        .arg("ssh") // Use ssh (rsync might have been configured differently)
         .arg(cfg_dir_with_slash) // Copy the contents of the current directory...
         .arg(format!("root@{}:/etc/henix/{}", node_location, cfg_hash)) // to `/etc/henix/{hash}` on the remote
         .output()
@@ -39,10 +29,10 @@ async fn copy_config(
     if !rsync.status.success() {
         return Err(anyhow!(format!(
             "Could not rsync files to location `{}` (rsync exited with {}), with stderr of:\n{}",
-            rsync.status
+            rsync
+                .status
                 .code()
-                .map(|x| i32::to_string(&x))
-                .unwrap_or("<unknown>".to_owned()),
+                .map_or_else(|| "<unknown>".to_owned(), |x| i32::to_string(&x)),
             node_location,
             String::from_utf8_lossy(&rsync.stderr)
         )));
@@ -58,18 +48,18 @@ async fn build_config(
     cfg_hash: &str,
 ) -> Result<()> {
     info!("Building config on remote");
-    let mut rebuild = remote
-        .command("nixos-rebuild");
+    let mut rebuild = remote.command("nixos-rebuild");
     rebuild
         .arg(if dep_opts.boot { "boot" } else { "switch" })
         .arg("--flake")
         .arg(format!("/etc/henix/{}#{}", cfg_hash, node_name)); // FIXME this doesn't escape quotes in the name.
-    let rebuild = ssh::proxy_output_to_logging("nixos-rebuild", rebuild).await.context("Rebuild execution failed")?;
+    let rebuild = ssh::proxy_output_to_logging("nixos-rebuild", rebuild)
+        .await
+        .context("Rebuild execution failed")?;
     if !rebuild.success() {
         return Err(anyhow!("Rebuild failed"));
-    } else {
-        info!("Finished building config on remote");
     }
+    info!("Finished building config on remote");
     Ok(())
 }
 
@@ -86,11 +76,12 @@ async fn process_node_raw(
     copy_config(&node_cfg.location, cfg_dir, &cfg_hash)
         .await
         .context("Could not copy config")?;
-    build_config(dep_opts, remote, &name, &cfg_hash)
+    build_config(dep_opts, remote, name, &cfg_hash)
         .await
         .context("Could not build config")?;
     // Link the latest config
-    let link_res = remote.command("ln")
+    let link_res = remote
+        .command("ln")
         .arg("-s")
         .arg("-f") // Overwite existing destination files
         .arg(format!("/etc/henix/{}", cfg_hash))
@@ -110,19 +101,14 @@ async fn process_node_raw(
 #[tracing::instrument(skip(dep_opts, node_cfg, cfg_dir))]
 pub async fn process_node(dep_opts: &DeployOpts, name: &str, node_cfg: NodeCfg, cfg_dir: &Path) {
     let mut remote;
-    match ssh::connect_to_node(&name, &node_cfg).await {
+    match ssh::connect_to_node(name, &node_cfg).await {
         Ok(r) => remote = r,
         Err(e) => {
             error!("{:?}", e);
             return;
         }
     }
-    if let Err(e) = process_node_raw(dep_opts, &mut remote, name, &node_cfg, &cfg_dir).await {
-        error!("{:?}", e);
-        if node_cfg.rollback_on_failure {
-            if let Err(e) = rollback(&mut remote).await {
-                error!("Error while rolling back: \n{:?}", e);
-            }
-        }
+    if let Err(e) = process_node_raw(dep_opts, &mut remote, name, &node_cfg, cfg_dir).await {
+        error!("Did not deploy configuration: {:?}", e);
     }
 }

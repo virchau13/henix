@@ -40,6 +40,7 @@ pub async fn hash(dir: &Path) -> anyhow::Result<String> {
             &String::from_utf8_lossy(&out.stderr)
         )));
     }
-    let hash = String::from_utf8(out.stdout).context("Could not decode nix-hash's output as UTF-8")?;
+    let hash =
+        String::from_utf8(out.stdout).context("Could not decode nix-hash's output as UTF-8")?;
     Ok(hash.trim().to_string())
 }

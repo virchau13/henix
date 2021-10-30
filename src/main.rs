@@ -1,5 +1,5 @@
-// Handles command line options, getting the deployment configuration,
-// and calling `deploy::process_node`.
+/// Handles command line options, getting the deployment configuration,
+/// and calling `deploy::process_node`.
 
 mod deploy;
 mod nix;
@@ -17,25 +17,16 @@ struct DeployCfg {
     pub nodes: BTreeMap<String, NodeCfg>,
 }
 
-// Needed for serde's defaults.
-fn r#true() -> bool {
-    true
-}
-
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NodeCfg {
     pub location: String,
-    #[serde(default = "r#true")]
-    pub rollback_on_failure: bool,
-    // #[serde(default = "r#true")]
-    // pub rollback_on_unreachable: bool,
 }
 
 #[derive(StructOpt, Debug)]
 #[structopt(name = "henix")]
 struct Opts {
-    #[structopt(parse(from_os_str), long, env)]
+    #[structopt(parse(from_os_str), long, env = "HENIX_CFG_DIR")]
     /// Specifies the path to the directory containing the configuration.
     cfg_dir: Option<PathBuf>,
     #[structopt(subcommand)]
@@ -44,16 +35,12 @@ struct Opts {
 
 #[derive(StructOpt, Debug)]
 enum OptCmd {
-    /// Deploy to the node.
+    /// Deploy nodes.
     Deploy(DeployOpts),
 }
 
 #[derive(StructOpt, Debug)]
 pub struct DeployOpts {
-    #[structopt(name = "rollback-on-failure", long)]
-    /// Overrides the `rollbackOnFailure` value in the configuration.
-    force_rollback_on_failure: Option<bool>,
-
     #[structopt(long)]
     /// Makes the rebuild only restart at boot, equivalent to `nixos-rebuild boot`.
     boot: bool,
@@ -84,7 +71,9 @@ async fn main() -> Result<()> {
 
     match opts.cmd {
         OptCmd::Deploy(dep_opts) => {
-            let cfg_dir = opts.cfg_dir.unwrap_or(std::env::current_dir().unwrap());
+            let cfg_dir = opts
+                .cfg_dir
+                .unwrap_or_else(|| std::env::current_dir().unwrap());
             info!("Gathering deploy information");
             let deploy_cfg: DeployCfg = nix::eval(&cfg_dir, ".#deploy")
                 .await
@@ -96,7 +85,7 @@ async fn main() -> Result<()> {
                 let name = name; // move `name`
                 let dep_opts = dep_opts.clone();
                 let cfg_dir = cfg_dir.clone();
-                deploy::process_node(&dep_opts, &name, node_cfg, &cfg_dir).await
+                deploy::process_node(&dep_opts, &name, node_cfg, &cfg_dir).await;
             }))
             .await;
             Ok(())

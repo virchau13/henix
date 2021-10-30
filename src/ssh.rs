@@ -24,7 +24,7 @@ pub async fn connect_to_node(node_name: &str, node_cfg: &NodeCfg) -> Result<open
 /// This proxies the output of an SSH command (`openssh::Command`)
 /// to the tracing logger, line-by-line.
 /// The child's stdout and stderr are both sent to `info!`.
-#[tracing::instrument(name="exec", skip(cmd))]
+#[tracing::instrument(name = "exec", skip(cmd))]
 pub async fn proxy_output_to_logging<'a>(
     program: &str,
     mut cmd: openssh::Command<'a>,
@@ -41,14 +41,20 @@ pub async fn proxy_output_to_logging<'a>(
         stdout = BufReader::new(child_stdout);
     } else {
         warn!("Could not take child stdout, stdout will not be logged");
-        return child.wait().await.context("Could not wait for child to finish");
+        return child
+            .wait()
+            .await
+            .context("Could not wait for child to finish");
     }
     let stderr;
     if let Some(child_stderr) = child.stderr().take() {
         stderr = BufReader::new(child_stderr);
     } else {
         warn!("Could not take child stderr, stderr will not be logged");
-        return child.wait().await.context("Could not wait for child to finish");
+        return child
+            .wait()
+            .await
+            .context("Could not wait for child to finish");
     }
     let mut stdout_lines = stdout.lines();
     let mut stderr_lines = stderr.lines();
@@ -68,6 +74,9 @@ pub async fn proxy_output_to_logging<'a>(
         }
     }
     // All lines have been processed, return status.
-    
-    child.wait().await.context("Could not wait for child status")
+
+    child
+        .wait()
+        .await
+        .context("Could not wait for child status")
 }
