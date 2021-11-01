@@ -1,15 +1,14 @@
 /// Handles command line options, getting the deployment configuration,
 /// and calling `deploy::process_node`.
-
 mod deploy;
 mod nix;
 mod ssh;
 
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use serde::Deserialize;
 use std::{collections::BTreeMap, path::PathBuf, sync::Arc};
 use structopt::StructOpt;
-use tracing::info;
+use tracing::{error, info};
 
 #[derive(Deserialize)]
 struct DeployCfg {
@@ -44,28 +43,18 @@ pub struct DeployOpts {
     #[structopt(long)]
     /// Makes the rebuild only restart at boot, equivalent to `nixos-rebuild boot`.
     boot: bool,
+
+    #[structopt(short, long = "target")]
+    /// Specifies which targets to deploy to. If a non-present target is specified, an error will
+    /// be thrown.
+    targets: Option<Vec<String>>,
+
+    #[structopt(long)]
+    /// Passes `--show-trace` to `nixos-rebuild`.
+    show_trace: bool,
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
-    // Initialize logging.
-    {
-        let mut env_var_exists = false;
-        // If environment var is empty or does not exist, set it to INFO by default.
-        if std::env::var("RUST_LOG")
-            .map(|x| x.is_empty())
-            .unwrap_or(true)
-        {
-            std::env::set_var("RUST_LOG", "INFO");
-        } else {
-            env_var_exists = true;
-        }
-        tracing_subscriber::fmt::init();
-        if env_var_exists {
-            info!("Picked up $RUST_LOG");
-        }
-    }
-
+async fn run() -> Result<()> {
     // Get the command line arguments.
     let opts = Opts::from_args();
 
@@ -80,15 +69,56 @@ async fn main() -> Result<()> {
                 .context("Could not get deploy configuration")?;
             let dep_opts = Arc::new(dep_opts);
             let cfg_dir = Arc::new(cfg_dir);
+            // Check if all targets exist
+            if let Some(targets) = dep_opts.targets.as_ref() {
+                for target in targets {
+                    if deploy_cfg.nodes.get(target).is_none() {
+                        return Err(anyhow!("Node name `{}` (specified using --target) does not exist. Did you remember to `git add` its configuration?", target));
+                    }
+                }
+            }
             // Join all node deployments.
             futures::future::join_all(deploy_cfg.nodes.into_iter().map(|(name, node_cfg)| async {
                 let name = name; // move `name`
                 let dep_opts = dep_opts.clone();
                 let cfg_dir = cfg_dir.clone();
-                deploy::process_node(&dep_opts, &name, node_cfg, &cfg_dir).await;
+                // If the user-specified `dep_opts.targets` exists, check if the node is specified
+                // in it.
+                // Otherwise, just allow it through.
+                if dep_opts
+                    .targets
+                    .as_ref()
+                    .map_or(true, |targets| targets.iter().any(|t| t == &name))
+                {
+                    deploy::process_node(&dep_opts, &name, node_cfg, &cfg_dir).await;
+                }
             }))
             .await;
             Ok(())
         }
+    }
+}
+
+#[tokio::main]
+async fn main() {
+    // Initialize logging.
+    {
+        let mut env_var_exists = false;
+        // If environment var is empty or does not exist, set it to INFO by default.
+        if std::env::var("RUST_LOG").map_or(true, |x| x.is_empty()) {
+            std::env::set_var("RUST_LOG", "INFO");
+        } else {
+            env_var_exists = true;
+        }
+        tracing_subscriber::fmt::init();
+        if env_var_exists {
+            info!("Picked up $RUST_LOG");
+        }
+    }
+
+    // Run and process any errors.
+    if let Err(e) = run().await {
+        error!("{}", e);
+        std::process::exit(1);
     }
 }

@@ -8,15 +8,15 @@ use tracing::{info, warn};
 
 pub async fn connect_to_node(node_name: &str, node_cfg: &NodeCfg) -> Result<openssh::Session> {
     info!("Establishing SSH session");
-    let remote = openssh::Session::connect(
-        format!("root@{}", &node_cfg.location),
-        openssh::KnownHosts::Add,
-    )
-    .await
-    .context(format!(
-        "Could not connect to node with name `{}`",
-        node_name
-    ))?;
+    let remote = openssh::SessionBuilder::default()
+        .user("root".to_string())
+        .control_directory("/tmp") // Default is "./", which is not nice to nix-hash.
+        .connect(&node_cfg.location)
+        .await
+        .context(format!(
+            "Could not connect to node with name `{}`",
+            node_name
+        ))?;
     info!("SSH session established");
     Ok(remote)
 }

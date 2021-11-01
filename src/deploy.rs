@@ -53,6 +53,9 @@ async fn build_config(
         .arg(if dep_opts.boot { "boot" } else { "switch" })
         .arg("--flake")
         .arg(format!("/etc/henix/{}#{}", cfg_hash, node_name)); // FIXME this doesn't escape quotes in the name.
+    if dep_opts.show_trace {
+        rebuild.arg("--show-trace");
+    }
     let rebuild = ssh::proxy_output_to_logging("nixos-rebuild", rebuild)
         .await
         .context("Rebuild execution failed")?;
