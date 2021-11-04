@@ -14,6 +14,9 @@
             packages.henix = naersk-lib.buildPackage {
                 pname = "henix";
                 root = ./.;
+                buildInputs = with pkgs; [
+                    rsync
+                ];
             };
             defaultPackage = self.packages."${system}".henix;
 
@@ -21,8 +24,6 @@
                 inputsFrom = [ self.packages."${system}".henix ];
                 buildInputs = with pkgs; [
                     nixUnstable
-                    cargo
-                    rustc
                     rust-analyzer
                     rustfmt
                     clippy
