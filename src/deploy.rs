@@ -1,11 +1,16 @@
 /// Does the actual deployment.
-use crate::{nix, ssh, DeployOpts, NodeCfg};
+use crate::{nix, ssh, util, DeployOpts, NodeCfg};
 use anyhow::{anyhow, Context, Result};
 use std::path::Path;
 use tokio::process;
 use tracing::{error, info, warn};
 
-async fn copy_config(node_location: &str, cfg_dir: &Path, cfg_hash: &str) -> Result<()> {
+async fn copy_config(
+    node_location: &str,
+    ssh_port: Option<u16>,
+    cfg_dir: &Path,
+    cfg_hash: &str,
+) -> Result<()> {
     info!("Copying files");
     info!("Using rsync to copy config");
     // We need to add a slash after `cfg_dir`,
@@ -13,28 +18,27 @@ async fn copy_config(node_location: &str, cfg_dir: &Path, cfg_hash: &str) -> Res
     // rather than the directory itself.
     let mut cfg_dir_with_slash = cfg_dir.to_owned();
     cfg_dir_with_slash.push("");
-    let rsync = process::Command::new("rsync")
+    let mut rsync = process::Command::new("rsync");
+    rsync
         .arg("--exclude=.git/")
         .arg("-a") // Archive mode, preserve symlinks, permissions, devices, etc.
         .arg("-F") // Allow `.rsync-filter` files to be used
         .arg("--delete") // Remove files on the remote not present locally
         .arg("--mkpath") // Equivalent of `mkdir -p` on the remote path
-        .arg("-e")
-        .arg("ssh") // Use ssh (rsync might have been configured differently)
+        .arg("-e") // Use...
+        .arg(ssh_port.map_or_else(|| "ssh".to_owned(), |port| format!("ssh -p {}", port))) // ...this ssh command
         .arg(cfg_dir_with_slash) // Copy the contents of the current directory...
-        .arg(format!("root@{}:/etc/henix/{}", node_location, cfg_hash)) // to `/etc/henix/{hash}` on the remote
-        .output()
+        .arg(format!("root@{}:/etc/henix/{}", node_location, cfg_hash)); // to `/etc/henix/{hash}` on the remote
+    let rsync = util::proxy_output_to_logging("rsync", rsync)
         .await
         .context("Could not execute rsync to copy files")?;
-    if !rsync.status.success() {
+    if !rsync.success() {
         return Err(anyhow!(format!(
-            "Could not rsync files to location `{}` (rsync exited with {}), with stderr of:\n{}",
+            "Could not rsync files to location `{}` (rsync exited with {})",
+            node_location,
             rsync
-                .status
                 .code()
                 .map_or_else(|| "<unknown>".to_owned(), |x| i32::to_string(&x)),
-            node_location,
-            String::from_utf8_lossy(&rsync.stderr)
         )));
     }
     info!("Copying finished");
@@ -76,7 +80,7 @@ async fn process_node_raw(
 ) -> Result<()> {
     let cfg_hash = nix::hash(cfg_dir).await.context("Could not get hash")?;
     info!("Configuration hash is {}", cfg_hash);
-    copy_config(&node_cfg.location, cfg_dir, &cfg_hash)
+    copy_config(&node_cfg.location, node_cfg.ssh_port, cfg_dir, &cfg_hash)
         .await
         .context("Could not copy config")?;
     build_config(dep_opts, remote, name, &cfg_hash)

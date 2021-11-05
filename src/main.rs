@@ -3,6 +3,7 @@
 mod deploy;
 mod nix;
 mod ssh;
+mod util;
 
 use anyhow::{anyhow, Context, Result};
 use serde::Deserialize;
@@ -20,6 +21,7 @@ struct DeployCfg {
 #[serde(rename_all = "camelCase")]
 pub struct NodeCfg {
     pub location: String,
+    pub ssh_port: Option<u16>,
 }
 
 #[derive(StructOpt, Debug)]
@@ -118,7 +120,7 @@ async fn main() {
 
     // Run and process any errors.
     if let Err(e) = run().await {
-        error!("{}", e);
+        error!("{:?}", e);
         std::process::exit(1);
     }
 }
