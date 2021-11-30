@@ -23,11 +23,16 @@
             devShell = pkgs.mkShell {
                 inputsFrom = [ self.packages."${system}".henix ];
                 buildInputs = with pkgs; [
+                    cargo
+                    rustc
                     nixUnstable
                     rust-analyzer
                     rustfmt
                     clippy
                 ];
+                # for rust-analyzer, see 
+                # https://discourse.nixos.org/t/rust-src-not-found-and-other-misadventures-of-developing-rust-on-nixos/11570/5
+                RUST_SRC_PATH = "${pkgs.rust.packages.stable.rustPlatform.rustLibSrc}";
             };
         }
     );
